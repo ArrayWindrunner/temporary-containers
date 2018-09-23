@@ -80,6 +80,7 @@
     "management",
     "storage",
     "tabs",
+    "proxy",
     "webRequest",
     "webRequestBlocking"
   ],

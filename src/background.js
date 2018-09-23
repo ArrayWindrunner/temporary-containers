@@ -51,6 +51,43 @@ class TemporaryContainers {
     await this.management.initialize();
     await this.tabs.initialize();
 
+    // Just slapped this ugly code on here to try an idea, I don't code in JS be waarned o/
+
+    // Levanto handler del proxy
+    var res = browser.proxy.onRequest.addListener((requestInfo) => {
+
+      // Indago qué tab es la que está levantando el request
+      var final_destination = browser.tabs.get(requestInfo.tabId).then((tabInfo) => {
+        
+          // Hay info de la tab, saquemos lista de containers y cotejemos el storage que usan
+          return browser.contextualIdentities.query({}).then((identities) => {
+            if (!identities.length) {
+              console.log('No identities returned from the API. Should not happen D:');
+              return {type: 'direct'};
+            }
+
+            // Ahora si, revisemos toda la lista
+            for (let identity of identities) {
+              if (identity.cookieStoreId === tabInfo.cookieStoreId) {          
+
+                // Si es una temporary tab, pasarla por TOR
+                if (identity.name.startsWith(this.storage.local.preferences.container.namePrefix)) {
+                  console.log("[PROXIED] Url: " + requestInfo.url + " (tid:"+ requestInfo.tabId + ") | CONTAINER: " + identity.name + "| cookieStore: |" + identity.cookieStoreId+"|");
+                  return {type: "socks", host: "127.0.0.1", port: 9050};
+                } else {
+                  // Otherwise, conexión normal
+                  console.log("NOTPROXXIEd");
+                  return {type: "direct"};
+                }
+                
+              }
+            }
+         });
+        });
+    
+      return final_destination;
+    }, {urls: ['<all_urls>']});
+    
     this.initialized = true;
   }
 }

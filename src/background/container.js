@@ -82,7 +82,8 @@ class Container {
       });
     }
 
-    const containerOptions = this.getContainerNameIconColor(request);
+    const containerOptions = this.getContainerNameIconColor((request && request.url) || url);
+    this.storage.local.tempContainersNumbers.push(containerOptions.number);
 
     if (!deletesHistory) {
       deletesHistory = this.mouseclick.shouldOpenDeletesHistoryContainer(url);
@@ -173,8 +174,7 @@ class Container {
       request,
       macConfirmPage
     });
-    if (!tab
-      || !newTab) { // TODO remove if MAC >6.0.0 is released
+    if (!tab) {
       return newTab;
     }
     await this.tabs.remove(tab);
@@ -182,7 +182,7 @@ class Container {
   }
 
 
-  getContainerNameIconColor(request) {
+  getContainerNameIconColor(url) {
     let tempContainerNumber;
     if (this.storage.local.preferences.container.numberMode === 'keep') {
       this.storage.local.tempContainerCounter++;
@@ -192,11 +192,16 @@ class Container {
       tempContainerNumber = this.getReusedContainerNumber();
     }
     let containerName = this.storage.local.preferences.container.namePrefix;
-    if (request && request.url) {
-      const parsedUrl = new URL(request.url);
-      containerName = containerName
-        .replace('%fulldomain%', parsedUrl.hostname)
-        .replace('%domain%', psl.parse(parsedUrl.hostname).domain);
+    if (url) {
+      const parsedUrl = new URL(url);
+      if (containerName.includes('%fulldomain%')) {
+        containerName = containerName.replace('%fulldomain%', parsedUrl.hostname);
+      }
+      if (containerName.includes('%domain%')) {
+        const domain = psl.isValid(parsedUrl.hostname) ? psl.get(parsedUrl.hostname) : parsedUrl.hostname;
+        containerName = containerName.replace('%domain%', domain);
+      }
+
     } else {
       containerName = containerName
         .replace('%fulldomain%', '')
@@ -324,6 +329,18 @@ class Container {
     }
 
     try {
+      await browser.contextualIdentities.get(cookieStoreId);
+    } catch (error) {
+      debug('[tryToRemove] container not found, removing entry from storage', cookieStoreId, error);
+      this.storage.local.tempContainersNumbers = this.storage.local.tempContainersNumbers.filter(number => {
+        return this.storage.local.tempContainers[cookieStoreId].number !== number;
+      });
+      delete this.storage.local.tempContainers[cookieStoreId];
+      await this.storage.persist();
+      return false;
+    }
+
+    try {
       const tempTabs = await browser.tabs.query({
         cookieStoreId
       });
@@ -340,7 +357,7 @@ class Container {
     try {
       cookies = await browser.cookies.getAll({storeId: cookieStoreId});
     } catch (error) {
-      debug('[tryToRemove] couldnt get cookies', cookieStoreId);
+      debug('[tryToRemove] couldnt get cookies', cookieStoreId, error);
     }
     const containerRemoved = await this.removeContainer(cookieStoreId);
     if (!containerRemoved) {
@@ -348,6 +365,9 @@ class Container {
     }
     const historyClearedCount = this.maybeClearHistory(cookieStoreId);
     this.statistics.update(historyClearedCount, cookies.length, cookieStoreId);
+    this.storage.local.tempContainersNumbers = this.storage.local.tempContainersNumbers.filter(number => {
+      return this.storage.local.tempContainers[cookieStoreId].number !== number;
+    });
     delete this.storage.local.tempContainers[cookieStoreId];
     await this.storage.persist();
     return true;
@@ -449,7 +469,7 @@ class Container {
   }
 
 
-  isPermanentContainer(cookieStoreId) {
+  isPermanent(cookieStoreId) {
     if (cookieStoreId !== 'firefox-default' && !this.storage.local.tempContainers[cookieStoreId]) {
       return true;
     }
@@ -511,27 +531,32 @@ class Container {
   }
 
 
+  isClean(cookieStoreId) {
+    return this.storage.local.tempContainers[cookieStoreId] &&
+      this.storage.local.tempContainers[cookieStoreId].clean;
+  }
+
+
   markUnclean(tabId) {
     const cookieStoreId = this.tabContainerMap[tabId];
-    if (cookieStoreId && this.storage.local.tempContainers[cookieStoreId] &&
-    this.storage.local.tempContainers[cookieStoreId].clean) {
-      debug('[webRequestOnBeforeRequest] marking tmp container as not clean anymore', cookieStoreId);
+    if (cookieStoreId && this.isClean(cookieStoreId)) {
+      debug('[markUnclean] marking tmp container as not clean anymore', cookieStoreId);
       this.storage.local.tempContainers[cookieStoreId].clean = false;
     }
   }
 
 
+  markClean(tabId) {
+    const cookieStoreId = this.tabContainerMap[tabId];
+    if (cookieStoreId && !this.isClean(cookieStoreId)) {
+      debug('[markClean] marking tmp container as clean', cookieStoreId);
+      this.storage.local.tempContainers[cookieStoreId].clean = true;
+    }
+  }
+
+
   getReusedContainerNumber() {
-    const tempContainersNumbers = Object.values(this.storage.local.tempContainers)
-      .reduce((accumulator, containerOptions) => {
-        if (typeof containerOptions !== 'object') {
-          accumulator.push(containerOptions);
-          return accumulator;
-        }
-        accumulator.push(containerOptions.number);
-        return accumulator;
-      }, [])
-      .sort();
+    const tempContainersNumbers = this.storage.local.tempContainersNumbers.sort();
     if (!tempContainersNumbers.length) {
       return 1;
     } else {

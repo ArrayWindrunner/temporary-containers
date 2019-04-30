@@ -3,8 +3,9 @@ class Request {
     this.background = background;
     this.canceledTabs = {};
     this.canceledRequests = {};
-    this.requestsSeen = {};
     this.requestIdUrlSeen = {};
+    this.cleanRequests = {};
+    this.lastSeenRequestUrl = {};
   }
 
   async initialize() {
@@ -51,12 +52,12 @@ class Request {
 
     const returnVal = await this._webRequestOnBeforeRequest(request);
 
-    if (!this.requestsSeen[request.requestId]) {
-      this.requestsSeen[request.requestId] = true;
+    if (!this.lastSeenRequestUrl[request.requestId]) {
       delay(300000).then(() => {
-        delete this.requestsSeen[request.requestId];
+        delete this.lastSeenRequestUrl[request.requestId];
       });
     }
+    this.lastSeenRequestUrl[request.requestId] = request.url;
 
     if (returnVal && returnVal.cancel) {
       this.cancelRequest(request);
@@ -76,16 +77,16 @@ class Request {
 
 
   async _webRequestOnBeforeRequest(request) {
-    debug('[browser.webRequest.onBeforeRequest] incoming request', request);
+    debug('[_webRequestOnBeforeRequest] incoming request', request);
     if (request.tabId === -1) {
-      debug('[browser.webRequest.onBeforeRequest] onBeforeRequest request doesnt belong to a tab, why are you main_frame?', request);
+      debug('[_webRequestOnBeforeRequest] onBeforeRequest request doesnt belong to a tab, why are you main_frame?', request);
       return;
     }
 
     this.browseraction.removeBadge(request.tabId);
 
     if (this.shouldCancelRequest(request)) {
-      debug('[webRequestOnBeforeRequest] canceling', request);
+      debug('[_webRequestOnBeforeRequest] canceling', request);
       return { cancel: true };
     }
 
@@ -94,15 +95,15 @@ class Request {
       try {
         macAssignment = await this.mac.getAssignment(request.url);
       } catch (error) {
-        debug('[webRequestOnBeforeRequest] contacting mac failed, probably old version', error);
+        debug('[_webRequestOnBeforeRequest] contacting mac failed, probably old version', error);
       }
     }
     if (macAssignment) {
       if (macAssignment.neverAsk) {
-        debug('[webRequestOnBeforeRequest] mac neverask assigned, we do nothing', macAssignment);
+        debug('[_webRequestOnBeforeRequest] mac neverask assigned, we do nothing', macAssignment);
         return;
       } else {
-        debug('[webRequestOnBeforeRequest] mac assigned', macAssignment);
+        debug('[_webRequestOnBeforeRequest] mac assigned', macAssignment);
       }
     }
 
@@ -113,39 +114,47 @@ class Request {
           url: request.url
         });
         if (typeof hostmap === 'object' && hostmap.cookieStoreId && hostmap.enabled) {
-          debug('[webRequestOnBeforeRequest] assigned with containerise we do nothing', hostmap);
+          debug('[_webRequestOnBeforeRequest] assigned with containerise we do nothing', hostmap);
           return;
         } else {
-          debug('[webRequestOnBeforeRequest] not assigned with containerise', hostmap);
+          debug('[_webRequestOnBeforeRequest] not assigned with containerise', hostmap);
         }
       } catch (error) {
-        debug('[webRequestOnBeforeRequest] contacting containerise failed, probably old version', error);
+        debug('[_webRequestOnBeforeRequest] contacting containerise failed, probably old version', error);
       }
     }
 
-    const parsedUrl = new URL(request.url);
-    for (const containWhat of ['@contain-facebook', '@contain-google', '@contain-twitter', '@contain-youtube']) {
-      if (this.management.addons[containWhat].enabled) {
-        for (const RE of this.management.addons[containWhat].REs) {
-          if (RE.test(parsedUrl.hostname)) {
-            debug('[webRequestOnBeforeRequest] handled by active container addon, ignoring', containWhat, RE, request.url);
-            return;
-          }
-        }
-      }
-    }
-
-    let tab;
+    let tab, openerTab;
     try {
       tab = await browser.tabs.get(request.tabId);
-      debug('[webRequestOnBeforeRequest] onbeforeRequest requested tab information', tab);
+      if (tab && tab.openerTabId) {
+        openerTab = await browser.tabs.get(tab.openerTabId);
+      }
+      debug('[_webRequestOnBeforeRequest] onbeforeRequest requested tab information', tab, openerTab);
     } catch (error) {
-      debug('[webRequestOnBeforeRequest] onbeforeRequest retrieving tab information failed, mac was probably faster', error);
+      debug('[_webRequestOnBeforeRequest] onbeforeRequest retrieving tab information failed, mac was probably faster', error);
     }
 
     if (tab && tab.incognito) {
-      debug('[webRequestOnBeforeRequest] tab is incognito, ignore it', tab);
+      debug('[_webRequestOnBeforeRequest] tab is incognito, ignore it', tab);
       return;
+    }
+
+    const parsedUrl = new URL(request.url);
+    const parsedTabUrl = tab && /^https?:/.test(tab.url) && new URL(tab.url);
+    const parsedOpenerTabUrl = openerTab && /^https?:/.test(openerTab.url) && new URL(openerTab.url);
+    for (const containWhat of ['@contain-facebook', '@contain-google', '@contain-twitter', '@contain-youtube']) {
+      if (!this.management.addons[containWhat].enabled) {
+        continue;
+      }
+      for (const RE of this.management.addons[containWhat].REs) {
+        if (RE.test(parsedUrl.hostname) ||
+           (parsedTabUrl && RE.test(parsedTabUrl.hostname)) ||
+           (parsedOpenerTabUrl && RE.test(parsedOpenerTabUrl.hostname))) {
+          debug('[_webRequestOnBeforeRequest] handled by active container addon, ignoring', containWhat, RE, request.url);
+          return;
+        }
+      }
     }
 
     this.container.maybeAddHistory(tab, request.url);
@@ -153,47 +162,45 @@ class Request {
     if ((request.url.startsWith('http://addons.mozilla.org') ||
         request.url.startsWith('https://addons.mozilla.org')) &&
         this.storage.local.preferences.ignoreRequestsToAMO) {
-      debug('[webRequestOnBeforeRequest] we are ignoring requests to addons.mozilla.org because we arent allowed to cancel requests anyway', request);
+      debug('[_webRequestOnBeforeRequest] we are ignoring requests to addons.mozilla.org because we arent allowed to cancel requests anyway', request);
       return;
     }
 
     if (request.url.startsWith('https://getpocket.com') &&
         this.storage.local.preferences.ignoreRequestsToPocket) {
-      debug('[webRequestOnBeforeRequest] we are ignoring requests to getpocket.com because of #52', request);
+      debug('[_webRequestOnBeforeRequest] we are ignoring requests to getpocket.com because of #52', request);
       return;
     }
 
-    const isolated = !macAssignment && await this.maybeIsolate(tab, request);
+    const isolated = !macAssignment && await this.maybeIsolate(tab, request, openerTab);
     if (isolated) {
-      debug('[webRequestOnBeforeRequest] we decided to isolate and open new tmpcontainer', request);
+      debug('[_webRequestOnBeforeRequest] we decided to isolate and open new tmpcontainer', request);
       return isolated;
     }
 
     const alwaysOpenIn = !macAssignment &&
-      await this.maybeAlwaysOpenInTemporaryContainer(tab, request);
+      await this.maybeAlwaysOpenInTemporaryContainer(tab, request, openerTab);
     if (alwaysOpenIn) {
-      debug('[webRequestOnBeforeRequest] we decided to always open in new tmpcontainer', request);
+      debug('[_webRequestOnBeforeRequest] we decided to always open in new tmpcontainer', request);
       return alwaysOpenIn;
     } else if (!this.storage.local.preferences.automaticMode.active &&
-               (!this.mouseclick.linksClicked[request.url] &&
-               (!tab || !this.storage.local.tempContainers[tab.cookieStoreId] ||
-                (this.storage.local.tempContainers[tab.cookieStoreId])))) {
-      debug('[webRequestOnBeforeRequest] automatic mode disabled and no link clicked', request);
+               !this.mouseclick.linksClicked[request.url]) {
+      debug('[_webRequestOnBeforeRequest] automatic mode disabled and no link clicked', request);
       return;
     } else if (this.mouseclick.unhandledLinksClicked[request.url]) {
-      debug('[webRequestOnBeforeRequest] we saw an unhandled click for that url', request);
+      debug('[_webRequestOnBeforeRequest] we saw an unhandled click for that url', request);
       return;
     }
 
     if (this.container.noContainerTabs[request.tabId]) {
-      debug('[webRequestOnBeforeRequest] no container tab, we ignore that', tab);
+      debug('[_webRequestOnBeforeRequest] no container tab, we ignore that', tab);
       return;
     }
 
     if (this.mouseclick.linksClicked[request.url]) {
       return this.handleClickedLink(request, tab, macAssignment);
     } else {
-      return this.handleNotClickedLink(request, tab, macAssignment);
+      return this.handleNotClickedLink(request, tab, macAssignment, openerTab);
     }
   }
 
@@ -214,8 +221,7 @@ class Request {
 
     let deletesHistoryContainer = false;
     if (tab &&
-        this.storage.local.tempContainers[tab.cookieStoreId] &&
-        this.storage.local.tempContainers[tab.cookieStoreId].deletesHistory &&
+        this.container.isTemporary(tab.cookieStoreId, 'deletesHistory') &&
         this.storage.local.preferences.deletesHistory.containerMouseClicks === 'automatic') {
       deletesHistoryContainer = true;
     }
@@ -255,12 +261,11 @@ class Request {
   }
 
 
-  async handleNotClickedLink(request, tab, macAssignment) {
+  async handleNotClickedLink(request, tab, macAssignment, openerTab) {
     debug('[handleNotClickedLink] onBeforeRequest', request, tab);
 
-    if (tab && tab.cookieStoreId === 'firefox-default' && tab.openerTabId) {
-      debug('[handleNotClickedLink] default container and openerTabId set', tab);
-      const openerTab = await browser.tabs.get(tab.openerTabId);
+    if (tab && tab.cookieStoreId === 'firefox-default' && openerTab) {
+      debug('[handleNotClickedLink] default container and openerTab', openerTab);
       if (!openerTab.url.startsWith('about:') && !openerTab.url.startsWith('moz-extension:')) {
         debug('[handleNotClickedLink] request didnt came from about/moz-extension page, we do nothing', openerTab);
         return;
@@ -299,8 +304,7 @@ class Request {
     }
 
     if (macAssignment) {
-      if (tab && tab.cookieStoreId &&
-          this.storage.local.tempContainers[tab.cookieStoreId]) {
+      if (tab && tab.cookieStoreId && this.container.isTemporary(tab.cookieStoreId)) {
         debug('[handleNotClickedLink] mac assigned but we are already in a tmp container, we do nothing', request, tab, macAssignment);
         return;
       }
@@ -392,13 +396,13 @@ class Request {
   }
 
 
-  async maybeIsolate(tab, request) {
+  async maybeIsolate(tab, request, openerTab) {
     if (!tab || !tab.url) {
       debug('[maybeIsolate] we cant proceed without tab url information', tab, request);
       return false;
     }
 
-    if (!await this.shouldIsolate(tab, request)) {
+    if (!await this.shouldIsolate(tab, request, openerTab)) {
       debug('[maybeIsolate] decided to not isolate', tab, request);
       return false;
     }
@@ -415,7 +419,7 @@ class Request {
       request,
       deletesHistory: this.storage.local.preferences.deletesHistory.containerIsolation === 'automatic'
     };
-    if (tab.url === 'about:newtab' || tab.url === 'about:blank' ||
+    if (tab.url === 'about:home' || tab.url === 'about:newtab' || tab.url === 'about:blank' ||
         this.storage.local.preferences.replaceTabs) {
       await this.container.reloadTabInTempContainer(params);
     } else {
@@ -425,10 +429,9 @@ class Request {
   }
 
 
-  async shouldIsolate(tab, request, openerCheck = false) {
+  async shouldIsolate(tab, request, openerTab) {
     debug('[shouldIsolate]', tab, request);
-    if (this.storage.local.tempContainers[tab.cookieStoreId] &&
-        this.storage.local.tempContainers[tab.cookieStoreId].clean) {
+    if (this.container.isClean(tab.cookieStoreId)) {
       debug('[shouldIsolate] not isolating because the tmp container is still clean');
       return false;
     }
@@ -438,17 +441,21 @@ class Request {
       return true;
     }
 
-    if (!openerCheck && tab.url === 'about:blank' && tab.openerTabId) {
-      const openerTab = await browser.tabs.get(tab.openerTabId);
+    if ((tab.url === 'about:blank' || tab.url === 'about:newtab' || tab.url === 'about:home') && !openerTab) {
+      debug('[shouldIsolate] not isolating because the tab url is blank/newtab/home and no openerTab');
+      return false;
+    }
+
+    if (openerTab && tab.url === 'about:blank') {
       debug('[shouldIsolate] we have to check the opener against the request', openerTab);
 
-      if (this.container.isPermanentContainer(tab.cookieStoreId) &&
+      if (this.container.isPermanent(tab.cookieStoreId) &&
           openerTab.cookieStoreId !== tab.cookieStoreId) {
         debug('[shouldIsolate] the tab loads a permanent container that is different from the openerTab, probaby explicitly selected in the context menu');
         return false;
       }
 
-      if (await this.shouldIsolate(openerTab, request, true)) {
+      if (await this.shouldIsolate(openerTab, request, false)) {
         debug('[shouldIsolate] decided to isolate because of opener', openerTab);
         return true;
       }
@@ -457,22 +464,14 @@ class Request {
       return false;
     }
 
-    if ((tab.url === 'about:blank' || tab.url === 'about:home') && !tab.openerTabId) {
-      debug('[shouldIsolate] not isolating because the tab url is blank/home and no openerTabId');
-      return false;
-    }
-
-    if (tab.url === 'about:blank' && this.requestsSeen[request.requestId]) {
-      debug('[shouldIsolate] not isolating because the tab url is blank and we seen this request before, probably redirect');
-      return false;
-    }
-
-    const parsedTabURL = new URL(tab.url);
+    const url = this.lastSeenRequestUrl[request.requestId] &&
+      this.lastSeenRequestUrl[request.requestId] !== tab.url ?
+      this.lastSeenRequestUrl[request.requestId] : tab.url;
+    const parsedURL = new URL(url);
     const parsedRequestURL = new URL(request.url);
 
     for (let domainPattern in this.storage.local.preferences.isolation.domain) {
       if (!this.isolation.matchDomainPattern(tab.url, domainPattern)) {
-        debug('[shouldIsolate] pattern not matching', tab.url, domainPattern);
         continue;
       }
 
@@ -500,13 +499,13 @@ class Request {
       }
 
       return await this.checkIsolationPreferenceAgainstUrl(
-        navigationPreferences.action, parsedTabURL.hostname, parsedRequestURL.hostname, tab
+        navigationPreferences.action, parsedURL.hostname, parsedRequestURL.hostname, tab
       );
     }
 
     if (await this.checkIsolationPreferenceAgainstUrl(
       this.storage.local.preferences.isolation.global.navigation.action,
-      parsedTabURL.hostname,
+      parsedURL.hostname,
       parsedRequestURL.hostname,
       tab
     )) {
@@ -522,7 +521,7 @@ class Request {
       debug('[shouldIsolateMac] mac isolation disabled');
       return false;
     }
-    if (this.container.isPermanentContainer(tab.cookieStoreId)) {
+    if (this.container.isPermanent(tab.cookieStoreId)) {
       debug('[shouldIsolateMac] mac isolating because request url is not assigned to the tabs permanent container');
       return true;
     }
@@ -533,19 +532,19 @@ class Request {
     debug('[checkIsolationPreferenceAgainstUrl]', preference, origin, target, tab);
     switch (preference) {
     case 'always':
-      debug('[checkIsolationPreferenceAgainstUrl] isolating based on global "always"');
+      debug('[checkIsolationPreferenceAgainstUrl] isolating based on "always"');
       return true;
 
     case 'notsamedomainexact':
       if (target !== origin) {
-        debug('[checkIsolationPreferenceAgainstUrl] isolating based on global "notsamedomainexact"');
+        debug('[checkIsolationPreferenceAgainstUrl] isolating based on "notsamedomainexact"');
         return true;
       }
       break;
 
     case 'notsamedomain':
       if (!this.utils.sameDomain(origin, target)) {
-        debug('[checkIsolationPreferenceAgainstUrl] isolating based on global "notsamedomain"');
+        debug('[checkIsolationPreferenceAgainstUrl] isolating based on "notsamedomain"');
         return true;
       }
       break;
@@ -554,12 +553,28 @@ class Request {
   }
 
 
-  async maybeAlwaysOpenInTemporaryContainer(tab, request) {
+  async maybeAlwaysOpenInTemporaryContainer(tab, request, openerTab) {
     if (!Object.keys(this.storage.local.preferences.isolation.domain).length) {
       return;
     }
     if (!tab || !tab.url) {
       debug('[maybeAlwaysOpenInTemporaryContainer] we cant proceed without tab url information', tab, request);
+      return false;
+    }
+
+    if (this.container.isClean(tab.cookieStoreId)) {
+      debug('[maybeAlwaysOpenInTemporaryContainer] not reopening because the tmp container is still clean');
+      if (!this.cleanRequests[request.requestId]) {
+        this.cleanRequests[request.requestId] = true;
+        delay(300000).then(() => {
+          delete this.cleanRequests[request.requestId];
+        });
+      }
+      return false;
+    }
+
+    if (this.cleanRequests[request.requestId]) {
+      debug('[maybeAlwaysOpenInTemporaryContainer] not reopening because of clean requests, redirect', request);
       return false;
     }
 
@@ -575,46 +590,30 @@ class Request {
       const preferences = this.storage.local.preferences.isolation.domain[domainPattern].always;
       debug('[maybeAlwaysOpenInTemporaryContainer] found pattern for incoming request url', domainPattern, preferences);
       if (preferences.action === 'disabled') {
-        debug('[maybeAlwaysOpenInTemporaryContainer] not reopening because always disabled');
-        break;
-      }
-      if (this.storage.local.tempContainers[tab.cookieStoreId] &&
-          this.storage.local.tempContainers[tab.cookieStoreId].clean) {
-        debug('[maybeAlwaysOpenInTemporaryContainer] not reopening because the tmp container is still clean');
-        break;
+        debug('[maybeAlwaysOpenInTemporaryContainer] not reopening because "always" disabled');
+        continue;
       }
 
-      if (tab.cookieStoreId !== 'firefox-default' &&
-          !this.storage.local.tempContainers[tab.cookieStoreId] &&
-          (typeof preferences !== 'object' ||
-           preferences.allowedInPermanent)) {
-        debug('[maybeAlwaysOpenInTemporaryContainer] not reopening because not in tmp or default container and allowed to load in permanent container');
-        break;
+      if (preferences.allowedInPermanent && this.container.isPermanent(tab.cookieStoreId)) {
+        debug('[maybeAlwaysOpenInTemporaryContainer] not reopening because allowed to load in permanent container');
+        continue;
       }
 
-      if (!this.storage.local.tempContainers[tab.cookieStoreId]) {
+      if (!this.container.isTemporary(tab.cookieStoreId)) {
         debug('[maybeAlwaysOpenInTemporaryContainer] reopening because not in a tmp container');
         reopen = true;
         break;
       }
 
-      if (tab.url === 'about:blank' && this.requestsSeen[request.requestId]) {
-        debug('[maybeAlwaysOpenInTemporaryContainer] not reopening because the tab url is blank and we seen this request before, probably redirect');
-        break;
-      }
-
       if (!this.isolation.matchDomainPattern(tab.url, domainPattern)) {
         let openerMatches = false;
-        if (tab.openerTabId) {
-          const openerTab = await browser.tabs.get(tab.openerTabId);
-          if (!openerTab.url.startsWith('about:')) {
-            if (this.isolation.matchDomainPattern(openerTab.url, domainPattern)) {
-              openerMatches = true;
-            }
-          }
+        if (openerTab && !openerTab.url.startsWith('about:') &&
+            this.isolation.matchDomainPattern(openerTab.url, domainPattern)) {
+          openerMatches = true;
+          debug('[maybeAlwaysOpenInTemporaryContainer] opener tab url matched the pattern', openerTab.url, domainPattern);
         }
         if (!openerMatches) {
-          debug('[maybeAlwaysOpenInTemporaryContainer] reopening because the tab url doesnt match the pattern', tab.url, domainPattern);
+          debug('[maybeAlwaysOpenInTemporaryContainer] reopening because the tab/opener url doesnt match the pattern', tab.url, openerTab, domainPattern);
           reopen = true;
           break;
         }
@@ -634,7 +633,7 @@ class Request {
         request,
         deletesHistory
       };
-      if (tab.url === 'about:newtab' || tab.url === 'about:blank') {
+      if (tab.url === 'about:home' || tab.url === 'about:newtab' || tab.url === 'about:blank') {
         await this.container.reloadTabInTempContainer(params);
       } else {
         await this.container.createTabInTempContainer(params);

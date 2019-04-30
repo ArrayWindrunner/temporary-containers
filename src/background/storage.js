@@ -80,6 +80,7 @@ class Storage {
     this.storageDefault = {
       tempContainerCounter: 0,
       tempContainers: {},
+      tempContainersNumbers: [],
       statistics: {
         startTime: new Date,
         containersDeleted: 0,

@@ -165,26 +165,28 @@ preferencesTestSet.map(preferences => { describe(`preferences: ${JSON.stringify(
   });
 
 
-  describe('tabs loading about:home or about:newtab in the default container', () => {
-    if (!preferences.automaticMode.active) {
+  describe('tabs loading about:home, about:newtab or about:blank in the default container', () => {
+    if (!preferences.automaticMode.active || preferences.automaticMode.newTab === 'navigation') {
       return;
     }
     it('should reopen about:home in temporary container', async () => {
-      const background = await loadBareBackground(preferences);
-      const fakeTab = {
-        url: 'about:home',
-        cookieStoreId: 'firefox-default'
-      };
-      const fakeContainer = {
-        cookieStoreId: 'firefox-temp'
-      };
-      browser.contextualIdentities.create.resolves(fakeContainer);
-      browser.tabs.create.resolves({id: 1});
+      const background = await loadBareBackground(preferences, {apiFake: true});
       await background.initialize();
-      background.storage.local.preferences.automaticMode.newTab = 'created';
-      await background.tabs.maybeReloadInTempContainer(fakeTab);
+      await browser.tabs._create({url: 'about:home'});
+      browser.tabs.create.should.have.been.calledOnce;
+    });
 
-      browser.contextualIdentities.create.should.have.been.calledOnce;
+    it('should reopen about:newtab in temporary container', async () => {
+      const background = await loadBareBackground(preferences, {apiFake: true});
+      await background.initialize();
+      await browser.tabs._create({url: 'about:newtab'});
+      browser.tabs.create.should.have.been.calledOnce;
+    });
+
+    it('should reopen about:blank in temporary container', async () => {
+      const background = await loadBareBackground(preferences, {apiFake: true});
+      await background.initialize();
+      await browser.tabs._create({});
       browser.tabs.create.should.have.been.calledOnce;
     });
   });
@@ -351,7 +353,7 @@ preferencesTestSet.map(preferences => { describe(`preferences: ${JSON.stringify(
       expect(background.mouseclick.linksClicked[fakeMessage.payload.href]).to.exist;
 
       clock.tick(1000);
-      await new Promise(r => process.nextTick(r));
+      await new Promise(process.nextTick);
       expect(background.mouseclick.linksClicked).to.deep.equal({});
     });
   });
@@ -412,7 +414,7 @@ preferencesTestSet.map(preferences => { describe(`preferences: ${JSON.stringify(
     });
 
     describe('New No Container Window Tab', () => {
-      it('should open a new no container tab', async () => {
+      it('should open a new no container window', async () => {
         const background = await loadBareBackground(preferences, {apiFake: true});
         await background.initialize();
         background.storage.local.preferences.keyboardShortcuts.AltShiftC = true;
@@ -425,7 +427,7 @@ preferencesTestSet.map(preferences => { describe(`preferences: ${JSON.stringify(
     });
 
     describe('New Deletes History Container Tab', () => {
-      it('should open a new no container tab', async () => {
+      it('should open a new deletes history container tab', async () => {
         const background = await loadBareBackground(preferences, {apiFake: true});
         await background.initialize();
         background.permissions.history = true;
@@ -439,19 +441,55 @@ preferencesTestSet.map(preferences => { describe(`preferences: ${JSON.stringify(
     });
 
     describe('New Same Container Tab', () => {
-      it('should open a new no container tab', async () => {
+      it('should open a new same container tab', async () => {
         const background = await loadBareBackground(preferences, {apiFake: true});
         await background.initialize();
         background.storage.local.preferences.keyboardShortcuts.AltX = true;
+        const container = await browser.contextualIdentities.create({});
         await browser.tabs._create({
-          cookieStoreId: 'firefox-container-123'
+          cookieStoreId: container.cookieStoreId
         });
         browser.commands.onCommand.addListener.yield('new_same_container_tab');
         await nextTick();
         browser.tabs.create.should.have.been.calledWithMatch({
-          cookieStoreId: 'firefox-container-123'
+          cookieStoreId: container.cookieStoreId
         });
       });
+    });
+  });
+
+  describe('Reuse container number', () => {
+    if (!preferences.automaticMode.active || preferences.automaticMode.newTab === 'navigation') {
+      return;
+    }
+
+    it('should work when multiple tabs are opened', async () => {
+      const background = await loadBareBackground(preferences, {apiFake: true});
+      await background.initialize();
+      background.storage.local.preferences.container.numberMode = 'reuse';
+      const tabPromises = [];
+      for (let i = 0; i < 5; i++) {
+        tabPromises.push(browser.tabs._create({}));
+      }
+      await Promise.all(tabPromises);
+      const tabs = await browser.tabs.query({});
+      const containerPromises = tabs.map(tab => browser.contextualIdentities.get(tab.cookieStoreId));
+      const containers = await Promise.all(containerPromises);
+      for (let i = 0; i < 5; i++) {
+        containers[i].name.should.equal(`tmp${i+1}`);
+      }
+
+      await browser.tabs.remove(tabs[0].id);
+      await background.container.cleanup(true);
+      await new Promise(process.nextTick);
+      await browser.tabs._create({});
+      (await browser.contextualIdentities.get(
+        (await browser.tabs.create.lastCall.returnValue).cookieStoreId
+      )).name.should.equal('tmp1');
+      await browser.tabs._create({});
+      (await browser.contextualIdentities.get(
+        (await browser.tabs.create.lastCall.returnValue).cookieStoreId
+      )).name.should.equal('tmp6');
     });
   });
 });});

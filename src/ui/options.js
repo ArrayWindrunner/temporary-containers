@@ -145,9 +145,7 @@ const initialize = async () => {
 
     const notificationsToolTip =
       '<div style="width:500px;">' +
-      'Will ask for Notifications Permissions when you click the first time<br>' +
-      'And with the next update of the Add-on - not again after that.<br>' +
-      'Asking after update again is a Firefox bug and is already reported.</div>';
+      'Will ask for Notifications Permissions when you click the first time</div>';
 
     $('#notificationsField').popup({
       html: notificationsToolTip,
@@ -181,6 +179,24 @@ const initialize = async () => {
 
     $('#popupField').popup({
       html: popupToolTip,
+      inline: true
+    });
+
+    const exportToolTip =
+        '<div style="width:500px;">' +
+        'Export your preferences into a JSON file</div>';
+
+    $('#exportPreferences').popup({
+      html: exportToolTip,
+      inline: true
+    });
+
+    const importToolTip =
+        '<div style="width:500px;">' +
+        'Import your preferences from a JSON file. No confirmation</div>';
+
+    $('#importPreferences').popup({
+      html: importToolTip,
       inline: true
     });
 
@@ -219,6 +235,8 @@ $('#resetStatistics').on('click', resetStatistics);
 $('#deletesHistoryStatisticsField').on('click', showDeletesHistoryStatistics);
 $('#deletesHistoryContainerWarningRead').on('click', requestHistoryPermissions);
 $('#notifications').on('click', requestNotificationsPermissions);
+$('#exportPreferences').on('click', exportPreferencesButton);
+$('#importPreferences').on('change', importPreferencesButton);
 
 $('#resetStorage').on('click', async (event) => {
   event.preventDefault();

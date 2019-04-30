@@ -141,6 +141,9 @@ window.isolationDomainEditRule = (domainPattern) => {
     $('#isolationPerDomainAccordion').accordion('open', 1);
     $('#isolationPerDomainAccordion').accordion('open', 2);
     $('#isolationPerDomainAccordion').accordion('open', 3);
+
+    isolationDomainExcludeDomains = domainRules.excluded;
+    updateIsolationExcludeDomains();
   }
 };
 
@@ -214,7 +217,7 @@ window.isolationDomainAddExcludeDomainRule = () => {
 };
 
 
-const isolationDomainExcludeDomains = {};
+let isolationDomainExcludeDomains = {};
 let isolationDomainExcludeDomainRulesClickEvent = false;
 window.updateIsolationExcludeDomains = () => {
   const isolationDomainExcludeDomainRulesDiv = $('#isolationDomainExcludeDomains');
@@ -422,4 +425,59 @@ window.formatBytes = (bytes, decimals) => {
     sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'],
     i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + sizes[i];
+};
+
+window.exportPreferencesButton = async (e) => {
+  e.preventDefault();
+  const date = new Date();
+  const dateString = [date.getFullYear(), date.getMonth() + 1, date.getDate()].join('-');
+  const timeString = [date.getHours(), date.getMinutes(), date.getSeconds()].join('.');
+  const a = document.createElement('a');
+  a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(await exportPreferences());
+  a.setAttribute('download', `temporary_containers_preferences_${dateString}_${timeString}.json`);
+  a.setAttribute('type', 'text/plain');
+  a.dispatchEvent(new MouseEvent('click'));
+};
+
+window.exportPreferences = async () => {
+  const storage = await browser.storage.local.get('preferences');
+  const exportedPreferences = {
+    version: browser.runtime.getManifest().version,
+    date: Date.now(),
+    preferences: storage.preferences,
+  };
+  return JSON.stringify(exportedPreferences, null, 2);
+};
+
+window.importPreferencesButton = async (e) => {
+  e.preventDefault();
+  await importPreferences(e.target.files[0]);
+  $(e.target).closest('form').get(0).reset();
+};
+
+window.importPreferences = async (file) => {
+  const reader = new FileReader();
+  reader.readAsText(file, 'UTF-8');
+  reader.onload = async (e) => {
+    try {
+      const importedPreferences = JSON.parse(e.target.result);
+
+      await browser.runtime.sendMessage({
+        method: 'savePreferences',
+        payload: {
+          preferences: importedPreferences.preferences,
+          migrate: true,
+          previousVersion: importedPreferences.version,
+        }
+      });
+
+      showMessage('Preferences imported.');
+
+      initialize();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.log('error while importing preferences', error);
+      showError('Error while importing preferences!');
+    }
+  };
 };

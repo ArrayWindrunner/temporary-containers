@@ -25,6 +25,7 @@
         <a class="item" data-tab="isolation">Isolation</a>
         <a class="item" data-tab="advanced">Advanced</a>
         <a class="item" data-tab="statistics">Statistics</a>
+        <a class="item" data-tab="export_import">Export/Import</a>
       </div>
       <div class="ui tab segment" data-tab="general">
         <form class="ui form">
@@ -119,7 +120,6 @@
           <div class="field">
             <button id="saveContainerPreferences" class="ui button primary">Save</button>
           </div>
-          <!--<iframe src="backup.html"></iframe>-->
         </form>
       </div>
       <div class="ui tab segment" data-tab="isolation">
@@ -383,10 +383,13 @@
             <div class="field">
               <label>Keyboard shortcuts</label>
             </div>
+            <div class="ui notice message">
+              Starting with Firefox 66 it's possible to reassign keyboard shortcuts on the Add-ons overview page.
+            </div>
             <div class="field" id="keyboardShortcutsAltCField">
               <div class="ui checkbox">
                 <input type="checkbox" id="keyboardShortcutsAltC">
-                <label>Alt+Shift+T (windows) / Alt+C (linux, macos) - Open a new Tab in a new Temporary Container</label>
+                <label>Alt+C - Open a new Tab in a new Temporary Container</label>
               </div>
             </div>
             <div class="field hidden" id="keyboardShortcutsAltPField">
@@ -565,10 +568,7 @@
                 your favorite news site in a "Deletes History Temporary Container" it won't delete all your previous visits to other reddit posts or news articles
                 that you made outside of "Deletes History Temporary Containers" because the full Website URLs are different.<br>
                 <br>
-                "Deletes History Temporary Containers" will delete history when the "Deletes History Temporary Container" itself gets deleted after the last Tab in it closes.<br>
-                <br>
-                After you gave the "Access browsing history" permission you'll be asked to give the permission again with the next update of the Add-on (not again after that).
-                <a href="https://bugzilla.mozilla.org/show_bug.cgi?id=1402850" target="_blank">That's a Firefox bug and it's reported here</a>.
+                "Deletes History Temporary Containers" will delete history when the "Deletes History Temporary Container" itself gets deleted after the last Tab in it closes.
               </div>
             </div>
             <div class="field" data-tooltip="This affects Automatic Mode, Toolbar Icon and the right-click context menu entry">
@@ -725,6 +725,17 @@
           <div class="field">
             <button id="saveStatisticsPreferences" class="ui button primary">Save</button>
             <button id="resetStatistics" class="ui button negative primary" data-tooltip="No confirmation">Reset Statistics</button>
+          </div>
+        </form>
+      </div>
+      <div class="ui tab segment" data-tab="export_import">
+        <form class="ui form">
+          <div class="field">
+            <button id="exportPreferences" class="ui button primary">Export Preferences</button>
+          </div>
+          <div class="field">
+            <label>Import Preferences</label>
+            <input id="importPreferences" type="file" name="Import Preferences">
           </div>
         </form>
       </div>

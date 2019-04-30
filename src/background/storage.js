@@ -45,6 +45,10 @@ class Storage {
           action: 'disabled',
         }
       },
+      proxyTemporaryTabs: true,
+      proxyType: "socks",
+      proxyHost: "127.0.0.1",
+      proxyPort: 9050,
       browserActionPopup: false,
       pageAction: false,
       contextMenu: true,

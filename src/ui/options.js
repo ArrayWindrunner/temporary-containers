@@ -47,6 +47,12 @@ const initialize = async () => {
       $('#deletesHistoryContainerIsolation').dropdown('set selected', preferences.deletesHistory.containerIsolation);
       $('#deletesHistoryContainerMouseClicks').dropdown('set selected', preferences.deletesHistory.containerMouseClicks);
 
+
+      document.querySelector('#proxyTemporaryTabs').checked = preferences.proxyTemporaryTabs;
+      document.querySelector('#proxyType').value = preferences.proxyType;
+      document.querySelector('#proxyHost').value = preferences.proxyHost;
+      document.querySelector('#proxyPort').value = preferences.proxyPort;
+
       document.querySelector('#browserActionPopup').checked = preferences.browserActionPopup;
       document.querySelector('#pageAction').checked = preferences.pageAction;
       document.querySelector('#contextMenu').checked = preferences.contextMenu;

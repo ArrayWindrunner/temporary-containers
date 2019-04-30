@@ -327,6 +327,12 @@ window.updateStatistics = async () => {
 window.saveAdvancedPreferences = async (event) => {
   event.preventDefault();
 
+  // TODO: Validation
+  preferences.proxyTemporaryTabs = document.querySelector('#proxyTemporaryTabs').checked;
+  preferences.proxyType = document.querySelector('#proxyType').value;
+  preferences.proxyHost = document.querySelector('#proxyHost').value;
+  preferences.proxyPort = document.querySelector('#proxyPort').value;
+
   preferences.browserActionPopup = document.querySelector('#browserActionPopup').checked;
   preferences.pageAction = document.querySelector('#pageAction').checked;
   preferences.contextMenu = document.querySelector('#contextMenu').checked;
